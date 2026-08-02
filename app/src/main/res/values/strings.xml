@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">File Vault</string>
+    <string name="vault_root">Vault</string>
+</resources>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Base XML theme. The real UI is Jetpack Compose (Material 3), which supplies
+      its own colors and dark-mode handling; this theme only needs to remove the
+      action bar and let the app draw edge-to-edge.
+    -->
+    <style name="Theme.FileVault" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
