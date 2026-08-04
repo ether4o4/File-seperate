@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      NO <uses-permission android:name="android.permission.INTERNET"/> ON PURPOSE.
+      The vault is fully offline: without this permission the OS blocks every
+      socket the app (and any bundled viewer/WebView) could open, so files can
+      never reach a cloud or any network destination.
+
+      NO READ/WRITE_EXTERNAL_STORAGE either. Import happens through the Storage
+      Access Framework, where the *user* grants one-time access to a USB drive /
+      SD card / folder and we copy the bytes INTO the app's private storage.
+    -->
+
+    <!-- USB-OTG drives surface through the system DocumentsProvider (SAF). This
+         feature flag lets the app run on devices without USB host support. -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+
+    <application
+        android:name=".VaultApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FileVault">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.FileVault">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
