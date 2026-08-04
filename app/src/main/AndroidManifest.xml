@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Strip ACCESS_NETWORK_STATE that bundled libraries (e.g. Coil) merge in.
+      It only *reads* connectivity state and never grants network access, but
+      removing it keeps the permission set minimal and the offline story exact.
+      The app still holds NO android.permission.INTERNET, so no sockets are possible.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
 
     <!--
       NO <uses-permission android:name="android.permission.INTERNET"/> ON PURPOSE.

@@ -144,6 +144,7 @@ private fun FileRow(
                         .padding(8.dp),
                 )
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    @Composable
                     fun item(label: String, action: NodeAction) = DropdownMenuItem(
                         text = { Text(label) },
                         onClick = { menuOpen = false; onAction(action) },
