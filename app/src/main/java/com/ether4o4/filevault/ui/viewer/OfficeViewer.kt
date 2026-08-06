@@ -1,5 +1,8 @@
 package com.ether4o4.filevault.ui.viewer
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
@@ -41,10 +44,11 @@ import java.util.Locale
  */
 @Composable
 fun OfficeViewer(file: File, fileName: String) {
-    val context = LocalContext.current
-    val renderer = remember { LibreOfficeKitRenderer(context.applicationContext) }
+    // LibreOfficeKit.init() requires an Activity, so resolve it from the context.
+    val activity = LocalContext.current.findActivity()
+    val renderer = remember(activity) { activity?.let { LibreOfficeKitRenderer(it) } }
 
-    if (!renderer.isAvailable()) {
+    if (renderer == null || !renderer.isAvailable()) {
         OfficeUnavailable(file, fileName)
         return
     }
@@ -132,4 +136,14 @@ private fun OfficeUnavailable(file: File, fileName: String) {
             }
         }
     }
+}
+
+/** Walks the ContextWrapper chain to find the hosting Activity, or null. */
+private fun Context.findActivity(): Activity? {
+    var ctx: Context = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }

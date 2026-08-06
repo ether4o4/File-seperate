@@ -1,6 +1,6 @@
 package com.ether4o4.filevault.office
 
-import android.content.Context
+import android.app.Activity
 import android.graphics.Bitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -12,108 +12,106 @@ import java.nio.ByteBuffer
  * that Collabora maintains for Android).
  *
  * WHY REFLECTION: the LOKit classes (`org.libreoffice.kit.*`) and their ~200 MB
- * of native libraries + `program/` assets are NOT bundled in this repo — they
- * are added separately (see docs/LIBREOFFICE.md). Talking to them via reflection
- * lets the whole app compile and run WITHOUT the payload: [isAvailable] simply
- * returns false and the office viewer shows a helpful message. Drop the AAR +
- * jniLibs + assets in, and this renderer lights up with zero code changes.
+ * of native libraries + `program/` assets are NOT bundled in this repo — they are
+ * added separately (see docs/LIBREOFFICE.md). Talking to them via reflection lets
+ * the whole app compile and run WITHOUT the payload: [isAvailable] returns false
+ * and the office viewer shows a helpful message. Drop the AAR + jniLibs + assets
+ * in and this renderer lights up with no code changes.
  *
- * The canonical, direct (non-reflection) implementation is documented in
- * docs/LIBREOFFICE.md — swap this class for it once the dependency is a hard one.
+ * The reflected calls match the real LibreOfficeKit Android API
+ * (github.com/LibreOffice/core, android/Bootstrap/src/org/libreoffice/kit):
+ *   LibreOfficeKit.init(Activity)                     // unpacks program/, sets dirs
+ *   ByteBuffer h = LibreOfficeKit.getLibreOfficeKitHandle()
+ *   Office office = new Office(h)
+ *   Document doc = office.documentLoad(path)
+ *   doc.initializeForRendering()
+ *   int parts = doc.getParts(); doc.setPart(i)
+ *   long w = doc.getDocumentWidth();  long h = doc.getDocumentHeight()   // twips
+ *   doc.paintTile(buf, canvasW, canvasH, 0, 0, (int)w, (int)h)
+ *   doc.destroy()
+ *
+ * NOTE: [init] requires an Activity, so this renderer is constructed with one.
  */
-class LibreOfficeKitRenderer(private val appContext: Context) : DocumentRenderer {
+class LibreOfficeKitRenderer(private val activity: Activity) : DocumentRenderer {
 
     override val engineName: String = "LibreOfficeKit"
 
     private val kitClass: Class<*>? by lazy {
         runCatching { Class.forName("org.libreoffice.kit.LibreOfficeKit") }.getOrNull()
     }
+    private val officeClass: Class<*>? by lazy {
+        runCatching { Class.forName("org.libreoffice.kit.Office") }.getOrNull()
+    }
 
     @Volatile
-    private var initialized = false
+    private var office: Any? = null
 
-    override fun isAvailable(): Boolean = kitClass != null
+    override fun isAvailable(): Boolean = kitClass != null && officeClass != null
 
-    private fun ensureInit(): Boolean {
-        if (initialized) return true
-        val cls = kitClass ?: return false
-        return runCatching {
-            // LibreOfficeKit.init(Context) sets up native lib dirs and unpacks
-            // the program/ assets on first run.
-            cls.getMethod("init", Context::class.java).invoke(null, appContext)
-            initialized = true
-            true
-        }.getOrDefault(false)
+    /** Initializes LOKit once and returns the shared Office handle. */
+    private fun ensureOffice(): Any? {
+        office?.let { return it }
+        val kit = kitClass ?: return null
+        val off = officeClass ?: return null
+        return synchronized(this) {
+            office ?: runCatching {
+                kit.getMethod("init", Activity::class.java).invoke(null, activity)
+                val handle = kit.getMethod("getLibreOfficeKitHandle").invoke(null)
+                off.getConstructor(ByteBuffer::class.java).newInstance(handle).also { office = it }
+            }.getOrNull()
+        }
     }
 
     override suspend fun open(file: File): OpenDocument? = withContext(Dispatchers.IO) {
-        if (!ensureInit()) return@withContext null
+        val o = ensureOffice() ?: return@withContext null
         runCatching {
-            val cls = kitClass!!
-            val office = cls.getMethod("getOffice").invoke(null)
-                ?: return@runCatching null
-            val documentLoad = office.javaClass.getMethod("documentLoad", String::class.java)
-            val document = documentLoad.invoke(office, file.absolutePath)
-                ?: return@runCatching null
-            LokDocument(document)
+            val doc = o.javaClass.getMethod("documentLoad", String::class.java)
+                .invoke(o, file.absolutePath) ?: return@runCatching null
+            doc.javaClass.getMethod("initializeForRendering").invoke(doc)
+            LokDocument(doc)
         }.getOrNull()
     }
 
     /** Wraps a reflected `org.libreoffice.kit.Document`. */
-    private class LokDocument(private val document: Any) : OpenDocument {
-
-        private val doc = document.javaClass
+    private class LokDocument(private val doc: Any) : OpenDocument {
+        private val cls = doc.javaClass
 
         override val pageCount: Int =
-            runCatching { doc.getMethod("getParts").invoke(document) as Int }
+            runCatching { cls.getMethod("getParts").invoke(doc) as Int }
                 .getOrDefault(1)
                 .coerceAtLeast(1)
 
         override suspend fun renderPage(index: Int, targetWidthPx: Int): Bitmap? =
             withContext(Dispatchers.IO) {
                 runCatching {
-                    doc.getMethod("setPart", Int::class.javaPrimitiveType)
-                        .invoke(document, index)
+                    val intType = Int::class.javaPrimitiveType
+                    cls.getMethod("setPart", intType).invoke(doc, index)
 
-                    // Document size is reported in twips (1/1440 inch).
-                    val size = LongArray(2)
-                    doc.getMethod("getDocumentSize", LongArray::class.java, LongArray::class.java)
-                        .let { m ->
-                            val w = LongArray(1); val h = LongArray(1)
-                            m.invoke(document, w, h)
-                            size[0] = w[0]; size[1] = h[0]
-                        }
-                    val twipsW = size[0].coerceAtLeast(1)
-                    val twipsH = size[1].coerceAtLeast(1)
+                    val wTwips = (cls.getMethod("getDocumentWidth").invoke(doc) as Long).coerceAtLeast(1)
+                    val hTwips = (cls.getMethod("getDocumentHeight").invoke(doc) as Long).coerceAtLeast(1)
 
                     val canvasW = targetWidthPx
-                    val canvasH = (targetWidthPx * twipsH / twipsW).toInt().coerceAtLeast(1)
+                    val canvasH = (targetWidthPx.toLong() * hTwips / wTwips).toInt().coerceAtLeast(1)
 
                     val bitmap = Bitmap.createBitmap(canvasW, canvasH, Bitmap.Config.ARGB_8888)
                     val buffer = ByteBuffer.allocateDirect(canvasW * canvasH * 4)
 
-                    // paintTile(buffer, canvasW, canvasH, tilePosX, tilePosY, tileW, tileH)
-                    doc.getMethod(
+                    // paintTile(buffer, canvasW, canvasH, tilePosX, tilePosY, tileWidthTwips, tileHeightTwips)
+                    cls.getMethod(
                         "paintTile",
                         ByteBuffer::class.java,
-                        Int::class.javaPrimitiveType,
-                        Int::class.javaPrimitiveType,
-                        Int::class.javaPrimitiveType,
-                        Int::class.javaPrimitiveType,
-                        Int::class.javaPrimitiveType,
-                        Int::class.javaPrimitiveType,
-                    ).invoke(
-                        document, buffer, canvasW, canvasH,
-                        0, 0, twipsW.toInt(), twipsH.toInt(),
-                    )
+                        intType, intType, intType, intType, intType, intType,
+                    ).invoke(doc, buffer, canvasW, canvasH, 0, 0, wTwips.toInt(), hTwips.toInt())
+
                     buffer.rewind()
+                    // LOKit paints BGRA; if colors look swapped on-device, swap R/B here.
                     bitmap.copyPixelsFromBuffer(buffer)
                     bitmap
                 }.getOrNull()
             }
 
         override fun close() {
-            runCatching { doc.getMethod("destroy").invoke(document) }
+            runCatching { cls.getMethod("destroy").invoke(doc) }
         }
     }
 }
