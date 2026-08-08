@@ -20,7 +20,10 @@ captures/
 .DS_Store
 Thumbs.db
 
-# LibreOfficeKit payload (huge; fetched/built separately — see docs/LIBREOFFICE.md)
+# LibreOfficeKit engine payload (huge; staged by scripts/setup-libreoffice.sh)
 libs/*.aar
 app/src/main/jniLibs/
+app/src/main/assets/lo/
 app/src/main/assets/libreoffice/
+# Vendored LibreOfficeKit C headers (fetched by the setup script)
+app/src/main/cpp/include/

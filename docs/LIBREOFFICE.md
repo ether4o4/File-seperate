@@ -1,105 +1,75 @@
-# Enabling full LibreOffice (LibreOfficeKit)
+# Full LibreOffice on-device (LibreOfficeKit)
 
-The office viewer is built against an engine-agnostic contract
-(`office/DocumentRenderer.kt`). The default binding, `LibreOfficeKitRenderer`,
-talks to **LibreOfficeKit (LOKit)** — the native LibreOffice engine that Collabora
-maintains for Android. Same technology as the LibreOffice/Collabora Android
-viewers; true, offline, LibreOffice-grade rendering of Writer, Calc, Impress and
-Draw.
+The office viewer renders Writer/Calc/Impress/Draw documents with the real
+LibreOffice engine, on-device and fully offline — no server, no other app, no
+network. It does this by bundling **Collabora Office's LibreOfficeKit engine**
+(`liblo-native-code.so` + the `program/`/`share/` resource tree) and driving it
+through LibreOfficeKit's **C API** via a small JNI bridge in `app/src/main/cpp`.
 
-It is **not bundled** here because the payload is large (~150–250 MB). You add it
-once; the app then lights up with no code changes, because
-`LibreOfficeKitRenderer.isAvailable()` detects the engine at runtime.
+The engine is ~200 MB, so it is **not committed to git**. You stage it once with a
+script, then build.
 
-## The payload — three parts
+## One-time setup + build
 
-1. **Native libraries** in `app/src/main/jniLibs/<abi>/`. The Android LOKit build
-   loads (via `System.loadLibrary`, in this order):
-   `nspr4, plds4, plc4, nssutil3, freebl3, sqlite3, softokn3, nss3, nssckbi,
-   nssdbm3, smime3, ssl3, c++_shared, lo-native-code`.
-   `liblo-native-code.so` is the big one (the whole office engine); the rest are
-   the bundled NSS/SQLite deps.
-2. **`program/` assets** in `app/src/main/assets/` — LibreOffice's resource tree
-   (fonts, import/export filters, `types/`, configuration). `LibreOfficeKit.init()`
-   unpacks / points the engine at these on first launch.
-3. **Java glue** — the `org.libreoffice.kit.*` classes (`LibreOfficeKit`, `Office`,
-   `Document`), packaged as an AAR into `./libs/` (or added as a source module).
+```bash
+# 1. Download the Collabora engine and stage it into the app
+#    (libs -> jniLibs, resources -> assets/lo/lo-assets.zip, C headers -> cpp/include)
+scripts/setup-libreoffice.sh            # arm64-v8a, latest snapshot
+#   or: scripts/setup-libreoffice.sh arm64-v8a 2026-07-03
 
-## Verified API (what `LibreOfficeKitRenderer` reflects into)
-
-From `android/Bootstrap/src/org/libreoffice/kit/` in github.com/LibreOffice/core:
-
-```java
-// LibreOfficeKit (static)
-static synchronized void init(Activity activity)   // sets dirs, unpacks program/
-static native ByteBuffer getLibreOfficeKitHandle()
-
-// Office
-Office(ByteBuffer handle)                           // constructed from the handle
-native String getError()
-Document documentLoad(String url)                   // path or file:// URL
-native void destroy()
-
-// Document
-void initializeForRendering()                       // call once after load
-native int  getParts()                              // pages / sheets / slides
-native void setPart(int partIndex)
-native long getDocumentWidth()                      // twips (1/1440 inch)
-native long getDocumentHeight()                     // twips
-void paintTile(ByteBuffer buffer, int canvasW, int canvasH,
-               int tilePosX, int tilePosY, int tileW, int tileH)  // tile* in twips
-native void destroy()
+# 2. Build (needs Android SDK + NDK 26.3.11579264 + CMake 3.22.1)
+./gradlew :app:assembleRelease
 ```
 
-`LibreOfficeKitRenderer` already calls exactly this sequence via reflection, so it
-activates the moment the classes + libs are present. Two things to verify on real
-hardware once the payload is in: LOKit paints **BGRA**, so if red/blue look
-swapped, swap channels before `copyPixelsFromBuffer`; and `init()` needs the
-foreground **Activity** (already wired through `OfficeViewer`).
+The resulting APK is ~250 MB and **arm64-v8a only** (stage other ABIs and add them
+to `defaultConfig.ndk.abiFilters` to support 32-bit / x86 devices). Builds without
+running the setup script still work — the office viewer just shows "engine not
+installed" and every other viewer (PDF, images, text/code, SQLite, media, HTML)
+works normally.
 
-## Getting the payload
+## How it fits together
 
-### Option A — Build from the LibreOffice source (authoritative)
+| Piece | Where |
+|---|---|
+| Engine + deps (`liblo-native-code.so`, nss, sqlite, …) | `app/src/main/jniLibs/<abi>/` (staged) |
+| LibreOffice resources (`program/`, `share/`, `etc/`, `user/`) | `app/src/main/assets/lo/lo-assets.zip` (staged) |
+| LibreOfficeKit C headers | `app/src/main/cpp/include/LibreOfficeKit/` (staged) |
+| JNI bridge (`libreofficekit_hook_2` → `paintTile`) | `app/src/main/cpp/lok_bridge.cpp` |
+| Kotlin surface | `office/NativeLok.kt` |
+| Unpack + init (asset zip → filesDir, `nativeInit`) | `office/LoEnvironment.kt` |
+| `DocumentRenderer` implementation | `office/NativeLokRenderer.kt` |
 
-1. Clone `core` from https://git.libreoffice.org/core (or Collabora's maintained
-   `libreoffice-*` / `collabora-online` branch).
-2. Set up an Android build with the NDK — see `android/README.md` in the tree.
-   Configure via `autogen.input` / a `distro-configs/` file targeting Android +
-   your ABI (`--with-distro=LibreOfficeAndroidX86_64`, etc.).
-3. `make` (long — hours, tens of GB). Then collect from `android/source/`:
-   - generated `*.so`      → `app/src/main/jniLibs/<abi>/`
-   - the `program/` tree   → `app/src/main/assets/libreoffice/program/`  *(see note)*
-   - `org.libreoffice.kit` classes → an AAR in `./libs/`
+**Runtime flow:** on first office-file open, `LoEnvironment` unpacks the resource
+zip into `filesDir/lo` (private storage), loads the engine, then calls
+`libreofficekit_hook_2(installPath = filesDir/lo/program, userProfile =
+file://filesDir/lo/user)`. Each page: `setPart` → `getDocumentSize` (twips) →
+`paintTile` into an Android bitmap (R/B swapped if the engine paints BGRA).
 
-> Note on the assets path: the stock LO Android app expects `program/` directly
-> under `assets/`. This project namespaces it under `assets/libreoffice/` (kept out
-> of git via `.gitignore`). If you use the stock `LibreOfficeKit.init` unpack
-> logic, either place `program/` directly under `assets/` or adjust the unpack root.
+## Why this build works with the C API
 
-### Option B — Consume a prebuilt Collabora / LibreOffice artifact
+Verified against the Collabora 25.04 arm64 snapshot:
+- `liblo-native-code.so` exports `libreofficekit_hook_2` / `libreofficekit_hook`.
+- It uses the standard UNO bootstrap (`fundamentalrc` / `URE_BOOTSTRAP`, normal
+  `dlopen` — no Android-specific `lo_dlopen` loader), so the documented desktop
+  init path applies.
 
-If you have a prebuilt LOKit AAR + jniLibs + assets (a Collabora Online Development
-Edition drop, or your own CI artifact), just drop the pieces into the paths above.
+(The Collabora *app* itself, `org.libreoffice.androidapp`, uses a WebView +
+embedded-server design and does **not** expose the `org.libreoffice.kit` Java
+classes — which is why this project talks to the engine directly via the C API
+instead of reusing their Java layer.)
 
-Either way, run `scripts/setup-libreoffice.sh <path-to-payload>` to place the files
-and sanity-check that `liblo-native-code.so` and `program/` are present.
+## Not yet verified on a device
 
-## Wiring it into the build
+This bridge compiles and packages, but the LOKit **runtime init on Android**
+(pointing the engine at the unpacked `program/` dir) is the finicky part that
+really needs one real-device run to confirm. If office files fail to open, grab a
+logcat filtered on `LokBridge` — the bridge logs the exact `getError()` from the
+engine, which pins down any remaining env/path tweak.
 
-1. In `app/build.gradle.kts`, uncomment:
-   ```kotlin
-   implementation(name = "libreofficekit", ext = "aar")
-   ```
-   (`settings.gradle.kts` already adds `flatDir { dirs("libs") }`.)
-2. The build is already prepared for it:
-   - `packaging.jniLibs.useLegacyPackaging = true` so LOKit can `dlopen` its libs,
-   - `androidResources.noCompress += "so"` + uncompressed assets for mmap,
-   - `ndk.abiFilters = ["arm64-v8a", "armeabi-v7a"]`.
-3. Build. `isAvailable()` now returns true and the office viewer renders documents
-   page-by-page.
+## Source & license
 
-## Size management
-
-- Ship only the ABIs you need (drop `armeabi-v7a` for 64-bit-only devices).
-- Use an **App Bundle** (`./gradlew :app:bundleRelease`) so Play delivers per-ABI
-  splits instead of one fat APK.
+- Engine: Collabora Office Android snapshots —
+  https://www.collaboraoffice.com/downloads/Collabora-Office-Android-Snapshot/
+- LibreOffice / Collabora Online is **MPL-2.0 / LGPL-3.0**. Bundling these
+  libraries in a distributed app carries attribution + source-availability
+  obligations. Fine for personal use; read the licenses before shipping.
