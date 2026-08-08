@@ -17,6 +17,9 @@
 #include <cstring>
 #include <string>
 
+// Tiled rendering is intentionally part of LibreOfficeKit's unstable C API.
+// This must be defined before the headers expose getParts/setPart/paintTile.
+#define LOK_USE_UNSTABLE_API
 #include <LibreOfficeKit/LibreOfficeKit.h>
 #include <LibreOfficeKit/LibreOfficeKitEnums.h>
 
@@ -42,7 +45,6 @@ JNIEXPORT jboolean JNICALL
 Java_com_ether4o4_filevault_office_NativeLok_nativeInit(
         JNIEnv* env, jobject, jstring installPath, jstring userProfile) {
     if (gKit) return JNI_TRUE;
-    // The engine exports both hooks; the _2 form takes a user-profile URL.
     LokHook2 hook = reinterpret_cast<LokHook2>(dlsym(RTLD_DEFAULT, "libreofficekit_hook_2"));
     if (!hook) {
         LOGE("libreofficekit_hook_2 not found: %s", dlerror());
@@ -95,7 +97,6 @@ Java_com_ether4o4_filevault_office_NativeLok_nativeGetParts(JNIEnv*, jobject, jl
     return n < 1 ? 1 : n;
 }
 
-// Returns [widthTwips, heightTwips] for the given part.
 JNIEXPORT jlongArray JNICALL
 Java_com_ether4o4_filevault_office_NativeLok_nativeGetSize(
         JNIEnv* env, jobject, jlong h, jint part) {
@@ -112,7 +113,6 @@ Java_com_ether4o4_filevault_office_NativeLok_nativeGetSize(
     return out;
 }
 
-// Paints `part` into an ARGB_8888 Bitmap sized by the caller. Returns true on success.
 JNIEXPORT jboolean JNICALL
 Java_com_ether4o4_filevault_office_NativeLok_nativePaint(
         JNIEnv* env, jobject, jlong h, jint part, jobject bitmap) {
@@ -131,12 +131,10 @@ Java_com_ether4o4_filevault_office_NativeLok_nativePaint(
     void* pixels = nullptr;
     if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS) return JNI_FALSE;
 
-    // Paint the whole part into the canvas (tile == full document).
     doc->pClass->paintTile(doc, static_cast<unsigned char*>(pixels),
                            static_cast<int>(info.width), static_cast<int>(info.height),
                            0, 0, static_cast<int>(twW), static_cast<int>(twH));
 
-    // LOK may emit BGRA; Android wants RGBA. Swap R/B if needed.
     bool bgra = true;
     if (doc->pClass->getTileMode) bgra = (doc->pClass->getTileMode(doc) == LOK_TILEMODE_BGRA);
     if (bgra) {
