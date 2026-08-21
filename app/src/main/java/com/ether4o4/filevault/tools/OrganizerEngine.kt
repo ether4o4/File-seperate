@@ -112,7 +112,9 @@ class OrganizerEngine(private val context: Context) {
             if (file.length() > 10 * 1024 * 1024) return false
             return try {
                 val text = resolver.openInputStream(file.uri)?.use { input ->
-                    input.readBytes().take(65536).toByteArray().toString(Charsets.UTF_8).lowercase(Locale.US)
+                    val buffer = ByteArray(65536)
+                    val count = input.read(buffer)
+                    if (count <= 0) "" else String(buffer, 0, count, Charsets.UTF_8).lowercase(Locale.US)
                 } ?: ""
                 terms.any { text.contains(it) }
             } catch (_: Throwable) { false }
