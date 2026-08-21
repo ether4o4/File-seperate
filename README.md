@@ -6,11 +6,30 @@ and are never mixed with the rest of the phone's files, never uploaded to a clou
 never handed to another app. Viewers for common file types are **bundled in**, so
 you don't install extra reader apps.
 
+## Download
+
+[![Download APK](https://img.shields.io/badge/Download-file--seperate.apk-brightgreen?style=for-the-badge&logo=android)](https://github.com/ether4o4/File-seperate/releases/download/android-latest/file-seperate.apk)
+[![Build bundled LibreOffice APK](https://github.com/ether4o4/File-seperate/actions/workflows/libreoffice-apk.yml/badge.svg)](https://github.com/ether4o4/File-seperate/actions/workflows/libreoffice-apk.yml)
+
+**Install straight from this permanent link — it always serves the newest build:**
+
+```
+https://github.com/ether4o4/File-seperate/releases/download/android-latest/file-seperate.apk
+```
+
+Every push to the default branch rebuilds the app in CI and republishes it to the
+rolling [`android-latest`](https://github.com/ether4o4/File-seperate/releases/tag/android-latest)
+release under the same filename, so the URL above never changes.
+
+- **~260 MB** — the full LibreOffice (LibreOfficeKit) engine is bundled inside, so
+  office documents render on-device with no extra app and no network.
+- **arm64-v8a only**, Android 8.0+ (`minSdk 26`). Debug-signed: enable "install from
+  unknown sources" for your browser/file manager, then open the downloaded file.
+
 > Status: this repository is a complete, buildable Android Studio project (Kotlin +
-> Jetpack Compose). One piece — the full LibreOffice rendering engine — ships as a
-> documented integration seam because its native payload is ~200 MB and is added
-> separately. See [docs/LIBREOFFICE.md](docs/LIBREOFFICE.md). Everything else works
-> out of the box.
+> Jetpack Compose), and CI builds a fully bundled APK — including the ~200 MB
+> LibreOffice native payload, which is staged at build time rather than committed
+> to git. See [docs/LIBREOFFICE.md](docs/LIBREOFFICE.md).
 
 ## What it does
 

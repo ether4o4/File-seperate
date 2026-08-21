@@ -8,6 +8,7 @@ plugins {
 android {
     namespace = "com.ether4o4.filevault"
     compileSdk = 35
+    ndkVersion = "26.3.11579264"
 
     defaultConfig {
         applicationId = "com.ether4o4.filevault"
@@ -19,9 +20,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
 
-        // Full LibreOffice (LOKit) native libs are enormous. When you add them,
-        // list only the ABIs you ship to keep the APK/AAB manageable.
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // Only arm64-v8a is staged by scripts/setup-libreoffice.sh by default.
+        // Stage more ABIs and add them here to support 32-bit / x86 devices.
+        ndk { abiFilters += listOf("arm64-v8a") }
+
+        externalNativeBuild {
+            cmake { cppFlags += "-std=c++17" }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
@@ -49,7 +61,11 @@ android {
     androidResources { noCompress += listOf("so") }
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
-        jniLibs { useLegacyPackaging = true } // required by LibreOfficeKit loading
+        jniLibs {
+            useLegacyPackaging = true // required by LibreOfficeKit loading
+            // The engine bundles its own libc++_shared.so; keep one copy.
+            pickFirsts += "**/libc++_shared.so"
+        }
     }
 }
 
@@ -80,7 +96,7 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer) // audio + video
     implementation(libs.androidx.media3.ui)
 
-    // Optional: LibreOfficeKit AAR, dropped into ./libs by you (see docs/LIBREOFFICE.md).
-    // Uncomment once present:
-    // implementation(name = "libreofficekit", ext = "aar")
+    // Office rendering is provided by the bundled LibreOfficeKit engine driven
+    // through the native bridge in src/main/cpp (no Maven/AAR dependency). Stage
+    // the engine with scripts/setup-libreoffice.sh before building.
 }
