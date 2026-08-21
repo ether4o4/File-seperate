@@ -23,7 +23,7 @@ class OrganizerEngine(private val context: Context) {
     suspend fun organize(treeUri: Uri, dryRun: Boolean): Result = withContext(Dispatchers.IO) {
         val root = DocumentFile.fromTreeUri(context, treeUri) ?: error("Folder is unavailable")
         if (!root.isDirectory) error("Selected item is not a folder")
-        val dirs = categories.associateWith { category ->
+        val dirs = if (dryRun) emptyMap() else categories.associateWith { category ->
             root.findFile(category)?.takeIf { it.isDirectory }
                 ?: root.createDirectory(category)
                 ?: error("Cannot create $category")
@@ -34,11 +34,11 @@ class OrganizerEngine(private val context: Context) {
         var errors = 0
         if (!dryRun) undoFile.writeText("")
 
-        fun walk(dir: DocumentFile) {
+        fun walk(dir: DocumentFile, relativePath: List<String>) {
             for (file in dir.listFiles()) {
                 if (file.isDirectory) {
                     if (file.name in categories || file.name == "_Organizer") continue
-                    walk(file)
+                    walk(file, relativePath + (file.name ?: "unnamed"))
                     continue
                 }
                 scanned++
@@ -46,17 +46,17 @@ class OrganizerEngine(private val context: Context) {
                 counts[category] = counts.getValue(category) + 1
                 if (dryRun) continue
                 try {
-                    val sourceParent = file.parentFile?.uri?.toString() ?: dir.uri.toString()
                     val name = file.name ?: "unnamed"
                     val destination = move(file, dirs.getValue(category), name)
-                    undoFile.appendText("$sourceParent\t${destination.uri}\t$name\n")
+                    val parentPath = Uri.encode(relativePath.joinToString("/"))
+                    undoFile.appendText("${treeUri}\t$parentPath\t$name\t${destination.uri}\n")
                     moved++
                 } catch (_: Throwable) {
                     errors++
                 }
             }
         }
-        walk(root)
+        walk(root, emptyList())
         Result(scanned, moved, errors, counts)
     }
 
@@ -65,10 +65,13 @@ class OrganizerEngine(private val context: Context) {
         var restored = 0
         for (line in undoFile.readLines().asReversed()) {
             val parts = line.split('\t')
-            if (parts.size < 3) continue
+            if (parts.size < 4) continue
             try {
-                val parent = DocumentFile.fromSingleUri(context, Uri.parse(parts[0])) ?: continue
-                val source = DocumentFile.fromSingleUri(context, Uri.parse(parts[1])) ?: continue
+                val root = DocumentFile.fromTreeUri(context, Uri.parse(parts[0])) ?: continue
+                val relative = Uri.decode(parts[1]).takeIf { it.isNotEmpty() }?.split('/') ?: emptyList()
+                var parent = root
+                for (segment in relative) parent = parent.findFile(segment)?.takeIf { it.isDirectory } ?: root
+                val source = DocumentFile.fromSingleUri(context, Uri.parse(parts[3])) ?: continue
                 val target = parent.createFile(source.type ?: "application/octet-stream", parts[2]) ?: continue
                 resolver.openInputStream(source.uri)?.use { input ->
                     resolver.openOutputStream(target.uri)?.use { output -> input.copyTo(output, 256 * 1024) }
@@ -106,8 +109,7 @@ class OrganizerEngine(private val context: Context) {
         val ext = name.substringAfterLast('.', "")
         fun hasAny(vararg terms: String) = terms.any { name.contains(it) }
         fun contentHas(vararg terms: String): Boolean {
-            val size = file.length()
-            if (size > 10 * 1024 * 1024) return false
+            if (file.length() > 10 * 1024 * 1024) return false
             return try {
                 val text = resolver.openInputStream(file.uri)?.use { input ->
                     input.readBytes().take(65536).toByteArray().toString(Charsets.UTF_8).lowercase(Locale.US)
