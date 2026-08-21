@@ -2,12 +2,11 @@ name: Build bundled LibreOffice APK
 
 on:
   push:
-    branches: [claude/mobile-file-explorer-app-e9ac93]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
 
-# Needed so the build can publish the APK to a GitHub Release.
 permissions:
   contents: write
 
@@ -50,7 +49,6 @@ jobs:
           set -euo pipefail
           test -s app/src/main/assets/lo/lo-assets.zip
           ls -l app/src/main/jniLibs/arm64-v8a/
-          # The engine tree must be a real payload, not an empty placeholder.
           size=$(stat -c%s app/src/main/assets/lo/lo-assets.zip)
           echo "engine bundle: $size bytes"
           test "$size" -gt 20000000
@@ -64,7 +62,6 @@ jobs:
           set -euo pipefail
           cp app/build/outputs/apk/debug/app-debug.apk file-seperate.apk
           ls -l file-seperate.apk
-          # Sanity: must be a real zip that actually contains the LO engine.
           head -c2 file-seperate.apk | grep -q PK
           unzip -l file-seperate.apk | grep -q 'lib/arm64-v8a/.*\.so'
           unzip -l file-seperate.apk | grep -q 'assets/lo/lo-assets.zip'
